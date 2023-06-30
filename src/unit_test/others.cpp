@@ -26,7 +26,6 @@
 using namespace examples;
 
 // spdlog_setup
-using fmt::arg;
 using spdlog::level::level_enum;
 using spdlog_setup::setup_error;
 using spdlog_setup::details::render;
@@ -129,16 +128,20 @@ TEST_CASE("Parse TOML file for set-up", "[from_file]") {
     console_logger->error("Console Message - Error!");
 }
 
-TEST_CASE(
+// No named args C++20 + fmt::arg double forwarding is borked:
+// https://github.com/guangie88/spdlog_setup/issues/57
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+
+    TEST_CASE(
     "Parse pre-TOML file for set-up", "[from_file_with_tag_replacement]") {
     spdlog::drop_all();
 
-    const auto index_arg = arg("index", 123);
-    const auto path_arg = arg("path", "spdlog_setup");
     const auto tmp_file = get_pre_conf_tmp_file();
 
     spdlog_setup::from_file_with_tag_replacement(
-        tmp_file.get_file_path(), index_arg, path_arg);
+        tmp_file.get_file_path(),  fmt::arg("index", 123), fmt::arg("path", "spdlog_setup"));
 
     const auto root_logger = spdlog::get("root");
     REQUIRE(root_logger != nullptr);
@@ -150,6 +153,7 @@ TEST_CASE(
     root_logger->error("Test Message - Error!");
     root_logger->critical("Test Message - Critical!");
 }
+#endif
 
 TEST_CASE(
     "Parse TOML file with override for set-up", "[from_file_with_override]") {
@@ -199,14 +203,16 @@ TEST_CASE(
     console_logger->critical("Console Message - Critical!");
 }
 
+// No named args C++20 + fmt::arg double forwarding is borked:
+// https://github.com/guangie88/spdlog_setup/issues/57
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+
 TEST_CASE(
     "Parse pre-TOML file with override for set-up",
     "[from_file_with_override_with_tag_replacement]") {
     spdlog::drop_all();
-
-    const auto index_arg = arg("index", 123);
-    const auto path_arg = arg("path", "spdlog_setup");
-    const auto hash_arg = arg("hash", "qwerty");
 
     const auto pre_conf_tmp_file = get_pre_conf_tmp_file();
     const auto override_pre_conf_tmp_file = get_override_pre_conf_tmp_file();
@@ -215,9 +221,9 @@ TEST_CASE(
         spdlog_setup::from_file_and_override_with_tag_replacement(
             pre_conf_tmp_file.get_file_path(),
             override_pre_conf_tmp_file.get_file_path(),
-            index_arg,
-            path_arg,
-            hash_arg);
+            fmt::arg("hash", "qwerty"),
+            fmt::arg("hash", "qwerty"),
+            fmt::arg("hash", "qwerty"));
 
     REQUIRE(use_override);
 
@@ -231,14 +237,18 @@ TEST_CASE(
     root_logger->error("Test Message - Error!");
     root_logger->critical("Test Message - Critical!");
 }
+#endif
+
+// No named args C++20 + fmt::arg double forwarding is borked:
+// https://github.com/guangie88/spdlog_setup/issues/57
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
 
 TEST_CASE(
     "Parse pre-TOML file with missing override for set-up",
     "[from_file_with_missing_override_with_tag_replacement]") {
     spdlog::drop_all();
-
-    const auto index_arg = arg("index", 123);
-    const auto path_arg = arg("path", "spdlog_setup");
 
     const auto pre_conf_tmp_file = get_pre_conf_tmp_file();
 
@@ -246,8 +256,8 @@ TEST_CASE(
         spdlog_setup::from_file_and_override_with_tag_replacement(
             pre_conf_tmp_file.get_file_path(),
             "no_such_file",
-            index_arg,
-            path_arg);
+            fmt::arg("index", 123),
+            fmt::arg("path", "spdlog_setup"));
 
     REQUIRE(!use_override);
 
@@ -261,6 +271,7 @@ TEST_CASE(
     root_logger->error("Test Message - Error!");
     root_logger->critical("Test Message - Critical!");
 }
+#endif
 
 TEST_CASE("Parse TOML file that does not exist", "[from_file_no_such_file]") {
     spdlog::drop_all();
@@ -268,6 +279,12 @@ TEST_CASE("Parse TOML file that does not exist", "[from_file_no_such_file]") {
     REQUIRE_THROWS_AS(
         spdlog_setup::from_file("config/no_such_file"), setup_error);
 }
+
+// No named args C++20 + fmt::arg double forwarding is borked:
+// https://github.com/guangie88/spdlog_setup/issues/57
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
 
 TEST_CASE(
     "Parse pre-TOML file that does not exist",
@@ -279,6 +296,7 @@ TEST_CASE(
         spdlog_setup::from_file_with_tag_replacement("config/no_such_file"),
         setup_error);
 }
+#endif
 
 TEST_CASE("Save logger to new file", "[save_logger_to_file_new]") {
     spdlog::drop_all();

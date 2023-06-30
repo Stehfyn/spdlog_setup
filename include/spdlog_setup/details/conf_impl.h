@@ -5,9 +5,14 @@
  */
 
 #pragma once
-
-#ifndef FMT_HEADER_ONLY
+#if !defined(SPDLOG_COMPILED_LIB) && !defined(FMT_HEADER_ONLY)
 #define FMT_HEADER_ONLY
+#endif
+
+#if (defined(SPDLOG_USE_STD_FORMAT) &&                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG >= 202002L) ||                          \
+     ((__cplusplus >= 202002L))))
+        #include <format>
 #endif
 
 #include "third_party/cpptoml.h"
@@ -231,14 +236,32 @@ inline auto get_parent_path(const std::string &file_path) -> std::string {
     return file_path.substr(0, last_slash_index);
 }
 
+inline auto dir_exists(const std::string &file_path) noexcept -> bool {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesA(file_path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat statbuf;
+    return stat(file_path.c_str(), &statbuf) != 0 && S_ISDIR(statbuf.st_mode);
+#endif
+}
+
 inline bool native_create_dir(const std::string &dir_path) noexcept {
+    bool success;
+
 #ifdef _WIN32
     // non-zero for success in Windows
-    return CreateDirectoryA(dir_path.c_str(), nullptr) != 0;
+    success = CreateDirectoryA(dir_path.c_str(), nullptr) != 0 ||
+              GetLastError() == ERROR_ALREADY_EXISTS;
 #else
     // zero for success for GNU
-    return mkdir(dir_path.c_str(), 0775) == 0;
+    success = mkdir(dir_path.c_str(), 0775) == 0 || errno == EEXIST;
 #endif
+
+    // not relying on EEXIST, since the operating system could give priority
+    // to other errors like EACCES or EROFS (see CPython os.makedirs())
+    return success || dir_exists(dir_path);
 }
 
 inline auto file_exists(const std::string &file_path) noexcept -> bool {
@@ -252,8 +275,6 @@ inline auto file_exists(const std::string &file_path) noexcept -> bool {
 }
 
 inline void create_dirs_impl(const std::string &dir_path) {
-    // fmt
-    using fmt::format;
 
 #ifdef _WIN32
     // check for both empty and drive letter
@@ -271,7 +292,13 @@ inline void create_dirs_impl(const std::string &dir_path) {
 
         if (!native_create_dir(dir_path)) {
             throw setup_error(
-                format("Unable to create directory at '{}'", dir_path));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                fmt::format("Unable to create directory at '{}'", dir_path));
+#else
+                std::format("Unable to create directory at '{}'", dir_path));
+#endif
         }
     }
 }
@@ -316,16 +343,19 @@ find_item_by_name(cpptoml::table_array &items, const std::string &name)
 inline void write_to_config_file(
     const cpptoml::table &config, const std::string &toml_path) {
 
-    // fmt
-    using fmt::format;
-
     // std
     using std::ofstream;
 
     ofstream override_str(toml_path);
 
     if (!override_str) {
-        throw setup_error(format("Unable to open '{}' for writing", toml_path));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        throw setup_error(fmt::format("Unable to open '{}' for writing", toml_path));
+#else
+        throw setup_error(std::format("Unable to open '{}' for writing", toml_path));
+#endif
     }
 
     auto writer = cpptoml::toml_writer(override_str);
@@ -335,9 +365,6 @@ inline void write_to_config_file(
 template <class... Ps>
 void read_template_file_into_stringstream(
     std::stringstream &toml_ss, const std::string &file_path, Ps &&... ps) {
-
-    // fmt
-    using fmt::format;
 
     // std
     using std::exception;
@@ -351,7 +378,13 @@ void read_template_file_into_stringstream(
         ifstream file_stream(file_path);
 
         if (!file_stream) {
-            throw setup_error(format("Error reading file at '{}'", file_path));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            throw setup_error(fmt::format("Error reading file at '{}'", file_path));
+#else
+            throw setup_error(std::format("Error reading file at '{}'", file_path));
+#endif
         }
 
         stringstream pre_toml_ss;
@@ -360,7 +393,13 @@ void read_template_file_into_stringstream(
         const auto pre_toml_content = pre_toml_ss.str();
 
         const auto toml_content =
-            format(pre_toml_content, std::forward<Ps>(ps)...);
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            fmt::format(pre_toml_content, std::forward<Ps>(ps)...);
+#else
+            std::format(pre_toml_content, std::forward<Ps>(ps)...);
+#endif
 
         toml_ss << toml_content;
     } catch (const exception &e) {
@@ -535,8 +574,7 @@ auto find_value_from_map(
 }
 
 template <class Fn, class ErrFn>
-auto add_msg_on_err(Fn &&fn, ErrFn &&add_msg_on_err_fn) ->
-    typename std::result_of<Fn()>::type {
+inline auto add_msg_on_err(Fn &&fn, ErrFn &&add_msg_on_err_fn){
 
     // std
     using std::exception;
@@ -551,9 +589,6 @@ auto add_msg_on_err(Fn &&fn, ErrFn &&add_msg_on_err_fn) ->
 }
 
 inline auto parse_max_size(const std::string &max_size_str) -> uint64_t {
-    // fmt
-    using fmt::format;
-
     // std
     using std::exception;
     using std::regex;
@@ -589,25 +624,45 @@ inline auto parse_max_size(const std::string &max_size_str) -> uint64_t {
                 // terabyte
                 return base_val * 1024 * 1024 * 1024 * 1024;
             } else {
-                throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                throw setup_error(fmt::format(
                     "Unexpected suffix '{}' for max size parsing", suffix));
+#else
+                throw setup_error(std::format(
+                    "Unexpected suffix '{}' for max size parsing", suffix));
+#endif
             }
         } else {
-            throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            throw setup_error(fmt::format(
                 "Invalid string '{}' for max size parsing", max_size_str));
+#else
+            throw setup_error(std::format(
+                "Invalid string '{}' for max size parsing", max_size_str));
+#endif
         }
     } catch (const exception &e) {
-        throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        throw setup_error(fmt::format(
             "Unexpected exception for max size parsing on string '{}': {}",
             max_size_str,
             e.what()));
+#else
+        throw setup_error(std::format(
+            "Unexpected exception for max size parsing on string '{}': {}",
+            max_size_str,
+            e.what()));
+#endif
     }
 }
 
 inline auto sink_type_from_str(const std::string &type) -> sink_type {
-    // fmt
-    using fmt::format;
-
     // std
     using std::string;
     using std::unordered_map;
@@ -638,7 +693,13 @@ inline auto sink_type_from_str(const std::string &type) -> sink_type {
     };
 
     return find_value_from_map(
-        MAPPING, type, format("Invalid sink type '{}' found", type));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        MAPPING, type, fmt::format("Invalid sink type '{}' found", type));
+#else
+        MAPPING, type, std::format("Invalid sink type '{}' found", type));
+#endif
 }
 
 inline void create_parent_dir_if_present(
@@ -661,9 +722,6 @@ inline void create_parent_dir_if_present(
 inline auto level_from_str(const std::string &level)
     -> spdlog::level::level_enum {
 
-    // fmt
-    using fmt::format;
-
     // spdlog
     namespace lv = spdlog::level;
 
@@ -682,14 +740,17 @@ inline auto level_from_str(const std::string &level)
     } else if (level == "off") {
         return lv::off;
     } else {
-        throw setup_error(format("Invalid level string '{}' provided", level));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        throw setup_error(fmt::format("Invalid level string '{}' provided", level));
+#else
+        throw setup_error(std::format("Invalid level string '{}' provided", level));
+#endif
     }
 }
 
 inline auto level_to_str(const spdlog::level::level_enum level) -> std::string {
-    // fmt
-    using fmt::format;
-
     // spdlog
     namespace lv = spdlog::level;
 
@@ -708,8 +769,15 @@ inline auto level_to_str(const spdlog::level::level_enum level) -> std::string {
     } else if (level == lv::off) {
         return "off";
     } else {
-        throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        throw setup_error(fmt::format(
             "Invalid level enum '{}' provided", static_cast<int>(level)));
+#else
+        throw setup_error(std::format(
+            "Invalid level enum '{}' provided", static_cast<int>(level)));
+#endif
     }
 }
 
@@ -737,9 +805,6 @@ auto setup_basic_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     using names::LEVEL;
     using names::TRUNCATE;
 
-    // fmt
-    using fmt::format;
-
     // std
     using std::make_shared;
     using std::string;
@@ -749,9 +814,17 @@ auto setup_basic_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     const auto filename = value_from_table<string>(
         sink_table,
         FILENAME,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of string value for basic_file_sink",
             FILENAME));
+#else
+        std::format(
+            "Missing '{}' field of string value for basic_file_sink",
+            FILENAME));
+#endif
 
     // must create the directory before creating the sink
     create_parent_dir_if_present(sink_table, filename);
@@ -770,9 +843,6 @@ auto setup_rotating_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     using names::MAX_FILES;
     using names::MAX_SIZE;
 
-    // fmt
-    using fmt::format;
-
     // std
     using std::make_shared;
     using std::string;
@@ -780,9 +850,17 @@ auto setup_rotating_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     const auto base_filename = value_from_table<string>(
         sink_table,
         BASE_FILENAME,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of string value for rotating_file_sink",
             BASE_FILENAME));
+#else
+        std::format(
+            "Missing '{}' field of string value for rotating_file_sink",
+            BASE_FILENAME));
+#endif
 
     // must create the directory before creating the sink
     create_parent_dir_if_present(sink_table, base_filename);
@@ -790,18 +868,34 @@ auto setup_rotating_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     const auto max_filesize_str = value_from_table<string>(
         sink_table,
         MAX_SIZE,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of string value for rotating_file_sink",
             MAX_SIZE));
+#else
+        std::format(
+            "Missing '{}' field of string value for rotating_file_sink",
+            MAX_SIZE));
+#endif
 
     const auto max_filesize = parse_max_size(max_filesize_str);
 
     const auto max_files = value_from_table<uint64_t>(
         sink_table,
         MAX_FILES,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of u64 value for rotating_file_sink",
             MAX_FILES));
+#else
+        std::format(
+            "Missing '{}' field of u64 value for rotating_file_sink",
+            MAX_FILES));
+#endif
 
     return make_shared<RotatingFileSink>(
         base_filename, max_filesize, max_files);
@@ -815,9 +909,6 @@ auto setup_daily_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     using names::ROTATION_HOUR;
     using names::ROTATION_MINUTE;
 
-    // fmt
-    using fmt::format;
-
     // std
     using std::make_shared;
     using std::string;
@@ -825,9 +916,17 @@ auto setup_daily_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     const auto base_filename = value_from_table<string>(
         sink_table,
         BASE_FILENAME,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of string value for daily_file_sink",
             BASE_FILENAME));
+#else
+        std::format(
+            "Missing '{}' field of string value for daily_file_sink",
+            BASE_FILENAME));
+#endif
 
     // must create the directory before creating the sink
     create_parent_dir_if_present(sink_table, base_filename);
@@ -835,16 +934,32 @@ auto setup_daily_file_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     const auto rotation_hour = value_from_table<int32_t>(
         sink_table,
         ROTATION_HOUR,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of string value for daily_file_sink",
             ROTATION_HOUR));
+#else
+        std::format(
+            "Missing '{}' field of string value for daily_file_sink",
+            ROTATION_HOUR));
+#endif
 
     const auto rotation_minute = value_from_table<int32_t>(
         sink_table,
         ROTATION_MINUTE,
-        format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        fmt::format(
             "Missing '{}' field of string value for daily_file_sink",
             ROTATION_MINUTE));
+#else
+        std::format(
+            "Missing '{}' field of string value for daily_file_sink",
+            ROTATION_MINUTE));
+#endif
 
     return make_shared<DailyFileSink>(
         base_filename, rotation_hour, rotation_minute);
@@ -859,9 +974,6 @@ auto setup_syslog_sink(const std::shared_ptr<cpptoml::table> &sink_table)
     using names::IDENT;
     using names::SYSLOG_FACILITY;
     using names::SYSLOG_OPTION;
-
-    // fmt
-    using fmt::format;
 
     // std
     using std::make_shared;
@@ -889,9 +1001,6 @@ auto setup_syslog_sink(const std::shared_ptr<cpptoml::table> &sink_table)
 inline auto sink_from_sink_type(
     const sink_type sink_val, const std::shared_ptr<cpptoml::table> &sink_table)
     -> std::shared_ptr<spdlog::sinks::sink> {
-
-    // fmt
-    using fmt::format;
 
     // spdlog
     using spdlog::sinks::basic_file_sink_mt;
@@ -993,9 +1102,17 @@ inline auto sink_from_sink_type(
 #endif
 
     default:
-        throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        throw setup_error(fmt::format(
             "Unexpected sink error with sink enum value '{}'",
             static_cast<int>(sink_val)));
+#else
+        throw setup_error(std::format(
+            "Unexpected sink error with sink enum value '{}'",
+            static_cast<int>(sink_val)));
+#endif
     }
 }
 
@@ -1036,15 +1153,19 @@ inline auto setup_sink(const std::shared_ptr<cpptoml::table> &sink_table)
 
     using names::TYPE;
 
-    // fmt
-    using fmt::format;
-
     // std
     using std::move;
     using std::string;
 
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
     const auto type_val = value_from_table<string>(
-        sink_table, TYPE, format("Sink missing '{}' field", TYPE));
+        sink_table, TYPE, fmt::format("Sink missing '{}' field", TYPE));
+#else
+    const auto type_val = value_from_table<string>(
+        sink_table, TYPE, std::format("Sink missing '{}' field", TYPE));
+#endif
 
     const auto sink_val = sink_type_from_str(type_val);
     auto sink = sink_from_sink_type(sink_val, sink_table);
@@ -1060,9 +1181,6 @@ inline auto setup_sinks(const std::shared_ptr<cpptoml::table> &config)
 
     using names::NAME;
     using names::SINK_TABLE;
-
-    // fmt
-    using fmt::format;
 
     // std
     using std::move;
@@ -1082,12 +1200,24 @@ inline auto setup_sinks(const std::shared_ptr<cpptoml::table> &config)
         auto name = value_from_table<string>(
             sink_table,
             NAME,
-            format("One of the sinks does not have a '{}' field", NAME));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            fmt::format("One of the sinks does not have a '{}' field", NAME));
+#else
+            std::format("One of the sinks does not have a '{}' field", NAME));
+#endif
 
         auto sink = add_msg_on_err(
             [&sink_table] { return setup_sink(sink_table); },
             [&name](const string &err_msg) {
-                return format("Sink '{}' error:\n > {}", name, err_msg);
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                return fmt::format("Sink '{}' error:\n > {}", name, err_msg);
+#else
+                return std::format("Sink '{}' error:\n > {}", name, err_msg);
+#endif
             });
 
         sinks_map.emplace(move(name), move(sink));
@@ -1102,9 +1232,6 @@ inline auto setup_patterns(const std::shared_ptr<cpptoml::table> &config)
     using names::NAME;
     using names::PATTERN_TABLE;
     using names::VALUE;
-
-    // fmt
-    using fmt::format;
 
     // std
     using std::move;
@@ -1121,12 +1248,24 @@ inline auto setup_patterns(const std::shared_ptr<cpptoml::table> &config)
             auto name = value_from_table<string>(
                 pattern_table,
                 NAME,
-                format("One of the patterns does not have a '{}' field", NAME));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                fmt::format("One of the patterns does not have a '{}' field", NAME));
+#else
+                std::format("One of the patterns does not have a '{}' field", NAME));
+#endif
 
             auto value = value_from_table<string>(
                 pattern_table,
                 VALUE,
-                format("Pattern '{}' does not have '{}' field", name, VALUE));
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                fmt::format("Pattern '{}' does not have '{}' field", name, VALUE));
+#else
+                std::format("Pattern '{}' does not have '{}' field", name, VALUE));
+#endif
 
             patterns_map.emplace(move(name), move(value));
         }
@@ -1144,9 +1283,6 @@ setup_thread_pools(const std::shared_ptr<cpptoml::table> &config) -> std::
     using names::NUM_THREADS;
     using names::QUEUE_SIZE;
     using names::THREAD_POOL_TABLE;
-
-    // fmt
-    using fmt::format;
 
     // spdlog
     using spdlog::init_thread_pool;
@@ -1187,25 +1323,51 @@ setup_thread_pools(const std::shared_ptr<cpptoml::table> &config) -> std::
             auto name = value_from_table<string>(
                 thread_pool_table,
                 NAME,
-                format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                fmt::format(
                     "One of the thread pools does not have a '{}' field",
                     NAME));
+#else
+                std::format(
+                    "One of the thread pools does not have a '{}' field",
+                    NAME));
+#endif
 
             const auto queue_size = value_from_table<size_t>(
                 thread_pool_table,
                 QUEUE_SIZE,
-                format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                fmt::format(
                     "Thread pool '{}' does not have '{}' field",
                     name,
                     QUEUE_SIZE));
+#else
+                std::format(
+                    "Thread pool '{}' does not have '{}' field",
+                    name,
+                    QUEUE_SIZE));
+#endif
 
             const auto num_threads = value_from_table<size_t>(
                 thread_pool_table,
                 NUM_THREADS,
-                format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                fmt::format(
                     "Thread pool '{}' does not have '{}' field",
                     name,
                     NUM_THREADS));
+#else
+                std::format(
+                    "Thread pool '{}' does not have '{}' field",
+                    name,
+                    NUM_THREADS));
+#endif
 
             thread_pools_map.emplace(
                 move(name), make_shared<thread_pool>(queue_size, num_threads));
@@ -1241,10 +1403,19 @@ inline auto setup_async_logger(
                     return find_value_from_map(
                         thread_pools_map,
                         thread_pool_name,
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
                         fmt::format(
                             "Unable to find thread pool '{}' for logger '{}'",
                             thread_pool_name,
                             name));
+#else
+                        std::format(
+                            "Unable to find thread pool '{}' for logger '{}'",
+                            thread_pool_name,
+                            name));
+#endif
                 }()
                 : spdlog::thread_pool();
 
@@ -1258,10 +1429,20 @@ inline auto setup_async_logger(
                     return find_value_from_map(
                         ASYNC_OVERFLOW_POLICY_MAP,
                         async_overflow_policy_raw,
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
                         fmt::format(
                             "Invalid async overflow policy type given '{}' for logger '{}'",
                             async_overflow_policy_raw,
                             name)
+#else
+                        std::format(
+                            "Invalid async overflow policy type given '{}' for "
+                            "logger '{}'",
+                            async_overflow_policy_raw,
+                            name)
+#endif
                     );
                 }()
                 : defaults::ASYNC_OVERFLOW_POLICY;
@@ -1285,7 +1466,6 @@ inline auto setup_logger(
     const cpptoml::option<std::string> &global_pattern_opt)
     -> std::shared_ptr<spdlog::logger> {
 
-    using fmt::format;
     using names::PATTERN;
     using std::exception;
     using std::string;
@@ -1293,16 +1473,32 @@ inline auto setup_logger(
     const auto name = value_from_table<std::string>(
         logger_table,
         names::NAME,
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
         fmt::format(
             "One of the loggers does not have a '{}' field", names::NAME));
+#else
+        std::format(
+            "One of the loggers does not have a '{}' field", names::NAME));
+#endif
 
     const auto sinks = array_from_table<std::string>(
         logger_table,
         names::SINKS,
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
         fmt::format(
             "Logger '{}' does not have a '{}' field of sink names",
             name,
             names::SINKS));
+#else
+        std::format(
+            "Logger '{}' does not have a '{}' field of sink names",
+            name,
+            names::SINKS));
+#endif
 
     std::vector<std::shared_ptr<spdlog::sinks::sink>> logger_sinks;
     logger_sinks.reserve(sinks.size());
@@ -1311,8 +1507,15 @@ inline auto setup_logger(
         auto sink = find_value_from_map(
             sinks_map,
             sink_name,
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
             fmt::format(
                 "Unable to find sink '{}' for logger '{}'", sink_name, name));
+#else
+            std::format(
+                "Unable to find sink '{}' for logger '{}'", sink_name, name));
+#endif
 
         logger_sinks.push_back(move(sink));
     }
@@ -1324,10 +1527,19 @@ inline auto setup_logger(
         sync_raw_opt ? find_value_from_map(
                            SYNC_MAP,
                            *sync_raw_opt,
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
                            fmt::format(
                                "Invalid sync type given '{}' for logger '{}'",
                                *sync_raw_opt,
                                name))
+#else
+                           std::format(
+                               "Invalid sync type given '{}' for logger '{}'",
+                               *sync_raw_opt,
+                               name))
+#endif
                      : sync_type::Sync;
 
     std::shared_ptr<spdlog::logger> logger;
@@ -1353,8 +1565,15 @@ inline auto setup_logger(
             set_logger_level_if_present(logger_table, logger);
         },
         [&logger](const string &err_msg) {
-            return format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            return fmt::format(
                 "Logger '{}' set level error:\n > {}", logger->name(), err_msg);
+#else
+            return std::format(
+                "Logger '{}' set level error:\n > {}", logger->name(), err_msg);
+#endif
         });
 
     add_msg_on_err(
@@ -1362,10 +1581,19 @@ inline auto setup_logger(
             set_logger_flush_level_if_present(logger_table, logger);
         },
         [&logger](const string &err_msg) {
-            return format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            return fmt::format(
                 "Logger '{}' set flush level error:\n > {}",
                 logger->name(),
                 err_msg);
+#else
+            return std::format(
+                "Logger '{}' set flush level error:\n > {}",
+                logger->name(),
+                err_msg);
+#endif
         });
 
     const auto pattern_name_opt =
@@ -1382,10 +1610,19 @@ inline auto setup_logger(
         const auto pattern_value = find_value_from_map(
             patterns_map,
             pattern_name,
-            format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+            fmt::format(
                 "Pattern name '{}' cannot be found for logger '{}'",
                 pattern_name,
                 logger->name()));
+#else
+            std::format(
+                "Pattern name '{}' cannot be found for logger '{}'",
+                pattern_name,
+                logger->name()));
+#endif
 
         return pattern_option_t(pattern_value);
     }()
@@ -1402,10 +1639,19 @@ inline auto setup_logger(
             logger->set_pattern(*selected_pattern_opt);
         }
     } catch (const exception &e) {
-        throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+        throw setup_error(fmt::format(
             "Error setting pattern to logger '{}': {}",
             logger->name(),
             e.what()));
+#else
+        throw setup_error(std::format(
+            "Error setting pattern to logger '{}': {}",
+            logger->name(),
+            e.what()));
+#endif
     }
 
     return logger;

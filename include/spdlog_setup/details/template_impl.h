@@ -8,6 +8,14 @@
 
 #include "setup_error.h"
 
+#if (                                                                          \
+    defined(SPDLOG_USE_STD_FORMAT) &&                                          \
+    ((defined(_MSVC_LANG) && _MSVC_LANG >= 202002L) ||                         \
+     ((__cplusplus >= 202002L))))
+#include <format>
+
+#endif
+
 #include "spdlog/fmt/fmt.h"
 
 #include <sstream>
@@ -36,8 +44,6 @@ inline auto is_valid_var_char(const char c) -> bool {
 inline auto render(
     const std::string &tmpl,
     const std::unordered_map<std::string, std::string> &m) -> std::string {
-    // fmt
-    using fmt::format;
 
     // std
     using std::stringstream;
@@ -83,9 +89,17 @@ inline auto render(
                 break;
             default:
                 if (!is_valid_var_char(c)) {
-                    throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                    throw setup_error(fmt::format(
                         "Found invalid char '{}' in variable interpolation",
                         c));
+#else
+                    throw setup_error(std::format(
+                        "Found invalid char '{}' in variable interpolation",
+                        c));
+#endif
                 }
                 state = render_state::var_name_start;
                 var_buffer << c;
@@ -103,8 +117,15 @@ inline auto render(
                 break;
             default:
                 if (!is_valid_var_char(c)) {
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
                     throw setup_error(
-                        format("Found invalid char '{}' in variable name", c));
+                        fmt::format("Found invalid char '{}' in variable name", c));
+#else
+                    throw setup_error(
+                        std::format("Found invalid char '{}' in variable name", c));
+#endif
                 }
                 var_buffer << c;
                 break;
@@ -120,10 +141,19 @@ inline auto render(
                 state = render_state::var_ending;
                 break;
             default:
-                throw setup_error(format(
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
+                throw setup_error(fmt::format(
                     "Found invalid char '{}' after variable name '{}'",
                     c,
                     var_buffer.str()));
+#else
+                throw setup_error(std::format(
+                    "Found invalid char '{}' after variable name '{}'",
+                    c,
+                    var_buffer.str()));
+#endif
             }
             break;
 
@@ -140,8 +170,15 @@ inline auto render(
                 break;
             }
             default:
+#if !defined(SPDLOG_USE_STD_FORMAT) ||                                         \
+    ((defined(_MSVC_LANG) && _MSVC_LANG < 202002L) ||                          \
+     ((!defined(_MSVC_LANG) && (__cplusplus < 202002L))))
                 throw setup_error(
-                    format("Found invalid char '{}' when expecting '}}'", c));
+                    fmt::format("Found invalid char '{}' when expecting '}}'", c));
+#else
+                throw setup_error(
+                    std::format("Found invalid char '{}' when expecting '}}'", c));
+#endif
             }
             break;
 
